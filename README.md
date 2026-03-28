@@ -13,7 +13,7 @@ The following commands are supported:
   VARCHAR(n).
 - `COPY FROM`: Loads into a table from a CSV file. Example usage could be:
 ```sql
-COPY table_name FROM /path/to/table.csv
+COPY table_name FROM /path/to/table.csv;
 ```
 - `SELECT FROM`: This is currently a TODO!
 - `\print_all`: Print metadata about current in-memory database.

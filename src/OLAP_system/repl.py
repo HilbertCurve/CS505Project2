@@ -1,4 +1,4 @@
-import database, sql_parser
+import CS505Project2.src.OLAP_system.database as database, CS505Project2.src.OLAP_system.sql_parser as sql_parser
 
 def exec_sql(data):
     sql_parser.parse(data)

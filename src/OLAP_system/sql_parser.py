@@ -18,7 +18,7 @@ The only syntax we wish to support are:
 """
 import re
 
-import database
+import CS505Project2.src.OLAP_system.database as database
 
 def tokenize(sql: str) -> list[str]:
     # Source: https://swanhart.livejournal.com/130191.html?

@@ -18,7 +18,7 @@ The only syntax we wish to support are:
 """
 import re
 
-import CS505Project2.src.OLAP_system.database as database
+import OLAP_system.database as database
 
 def tokenize(sql: str) -> list[str]:
     # Source: https://swanhart.livejournal.com/130191.html?
@@ -57,14 +57,32 @@ def parse(sql: str):
             elif column_type != "INTEGER":
                 raise AssertionError(f"INTEGER or VARCHAR(n) expected, found {column_type}.")
 
-            columns[column_name] = {column_type: column_length}
+            columns[column_name] = [column_type, column_length]
 
         assert tokens[mark + 1] == ";"
         database.create_table(table_name, columns)
         print("CREATE TABLE")
     elif tokens[0] == "SELECT":
-        # TODO: parse SELECT statement!
-        #database.handle_select(tokens)
+        column_names = []
+        mark = 1
+        while tokens[mark] != "FROM":
+            column_names.append(tokens[mark])
+            assert tokens[mark + 1] == ","
+            mark += 2
+        mark += 1
+        table_name = tokens[mark]
+        mark += 1
+
+        predicate = []
+        if tokens[mark] != ";":
+            assert tokens[mark] == "WHERE"
+            mark += 1
+            assert tokens[mark] != ";"
+            while tokens[mark] != ";":
+                predicate.append(tokens[mark])
+                mark += 1
+
+        database.handle_select(table_name, column_names, predicate)
         pass
     elif tokens[0] == "COPY":
         table = tokens[1]

@@ -1,6 +1,6 @@
 """Entry point for all test cases in this DBMS project.
 """
-import CS505Project2.src.OLAP_system.sql_parser as sql_parser
+import OLAP_system.sql_parser as sql_parser
 
 def run_tests():
     print("Tokenizer tests... ")

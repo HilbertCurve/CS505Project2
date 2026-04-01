@@ -18,6 +18,8 @@ equivalent.
 
 A database is a string-indexed map of tables.
 """
+import pandas as pd
+
 # A mapping between table names and their respective tables.
 system_information = {}
 
@@ -30,11 +32,10 @@ class ColumnChunk:
         size (int): The number of values in the chunk.
     """
     MAX_CHUNK_SIZE = 1024
-    def __init__(self, column_chunk: list):
+    def __init__(self, column_chunk: pd.DataFrame):
         assert self.MAX_CHUNK_SIZE >= len(column_chunk) > 0 # what is this python syntax O_o
         self.column_chunk = column_chunk
         self.size = len(column_chunk)
-
 
 class Table:
     """Class used for storing csv table data.
@@ -51,44 +52,41 @@ class Table:
     def __init__(self, table_name: str, column_schema: dict):
         self.name: str = table_name
         self.column_schema: dict = column_schema
-        self.columns: dict[str, list[ColumnChunk]] = {}
-        for h in self.column_schema:
-            self.columns[h] = []
-
+        self.chunks: list[ColumnChunk] = []
         self.length: int = 0
 
     def load_csv(self, path: str):
         with open(path) as f:
             # initialize empty column chunks
             headers = f.readline().strip().split(",")
-            curr_chunks = {}
+            if len(headers) != len(self.column_schema):
+                raise AssertionError(f"Expected CSV with {len(self.column_schema)} columns, got {len(headers)}!")
+
+            curr_chunk = pd.DataFrame(index=headers)
+            for col in self.column_schema:
+                if self.column_schema[col][0] == "INTEGER":
+                    curr_chunk.columns[col.key].dtype = int
+                else:
+                    curr_chunk.columns[col.key].dtype = '|S' + str(self.column_schema[col][1])
+
             curr_chunk_size = 0
-            for h in headers:
-                curr_chunks[h] = []
 
             # populate columns
             for line in f:
                 cols = line.strip().split(",")
-                if len(cols) != len(self.column_schema):
-                    raise AssertionError(f"Expected CSV with {len(self.column_schema)} columns, got {len(cols)}!")
+                curr_chunk.loc[-1] = cols
 
-                # fill corresponding column chunks
-                for idx, h in enumerate(headers):
-                    curr_chunks[h].append(cols[idx])
                 curr_chunk_size += 1
                 self.length += 1
 
                 # populate column chunks in database once max capacity is reached
                 if curr_chunk_size == ColumnChunk.MAX_CHUNK_SIZE:
-                    for h in headers:
-                        self.columns[h].append(ColumnChunk(curr_chunks[h]))
+                    self.chunks.append(ColumnChunk(curr_chunk))
                     curr_chunk_size = 0
 
             # insert remaining stub if partially-filled chunk
             if curr_chunk_size > 0:
-                for h in headers:
-                    self.columns[h].append(ColumnChunk(curr_chunks[h]))
-
+                self.chunks.append(ColumnChunk(curr_chunk))
 
 def create_table(table_name: str, columns: dict):
     """Create a table with preset columns.
@@ -111,9 +109,21 @@ def load_csv(table_name: str, filename: str):
         raise AssertionError(f"Table '{table_name}' not created yet.")
     system_information[table_name].load_csv(filename)
 
-
 def print_summary():
     print(f"ColumnChunk.MAX_CHUNK_SIZE: {ColumnChunk.MAX_CHUNK_SIZE}.")
     for table in system_information:
-        print(f"{table}: {len(system_information[table].columns)} chunks.")
-        print(f"\tcols: {system_information[table].columns.keys()}.")
+        print(f"{table}: {len(system_information[table].chunks)} chunks.")
+        print(f"\tcols: {system_information[table].column_schema}.")
+
+
+def handle_select(table_name: str, column_names: list[str], predicate: list[str]):
+    """Processes a select query.
+
+    Args:
+        table_name (str): The name of the table previously made with CREATE TABLE,
+        column_names (list[str]): A list of columns to be returned from this query,
+        predicate: (list[str]): A list of tokens to be interpreted for this query.
+    """
+
+
+    return None

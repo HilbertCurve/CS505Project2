@@ -5,6 +5,12 @@ parsing will be implemented later.
 """
 
 simple_query_lookup = {
-    "col1 > 100": lambda _table, col1 : col1 > 100,
-    "name = 'john'": lambda _table, name : name == "john",
+    "col1 > 100": {
+        "args": "col1",
+        "func": lambda _table, col1 : col1 > 100,
+    },
+    "name = 'john'": {
+        "args": "name",
+        "func": lambda _table, name : name == "john",
+    }
 }

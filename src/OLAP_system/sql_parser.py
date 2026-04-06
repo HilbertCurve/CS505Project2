@@ -22,7 +22,7 @@ import OLAP_system.database as database
 
 def tokenize(sql: str) -> list[str]:
     # Source: https://swanhart.livejournal.com/130191.html?
-    matcher = re.compile(r"""[A-Za-z_.0-9/]+|\(|\)|"(?:[^"]|\"|"")*"+|'[^'](?:|\'|'')*'+|-|=|;|,""")
+    matcher = re.compile(r"""[A-Za-z_.0-9/]+|\(|\)|[<=>]+|"(?:[^"]|\"|"")*"+|'[^'](?:|\'|'')*'+|-|=|;|,""")
     return matcher.findall(sql)
 
 def parse(sql: str):
@@ -57,7 +57,7 @@ def parse(sql: str):
             elif column_type != "INTEGER":
                 raise AssertionError(f"INTEGER or VARCHAR(n) expected, found {column_type}.")
 
-            columns[column_name] = [column_type, column_length]
+            columns[column_name] = (column_type, column_length)
 
         assert tokens[mark + 1] == ";"
         database.create_table(table_name, columns)
@@ -66,9 +66,11 @@ def parse(sql: str):
         column_names = []
         mark = 1
         while tokens[mark] != "FROM":
-            column_names.append(tokens[mark])
-            assert tokens[mark + 1] == ","
-            mark += 2
+            if tokens[mark] == ",":
+                mark += 1
+            else:
+                column_names.append(tokens[mark])
+                mark += 1
         mark += 1
         table_name = tokens[mark]
         mark += 1
@@ -82,8 +84,7 @@ def parse(sql: str):
                 predicate.append(tokens[mark])
                 mark += 1
 
-        database.handle_select(table_name, column_names, predicate)
-        pass
+        print(database.handle_select(table_name, column_names, predicate))
     elif tokens[0] == "COPY":
         table = tokens[1]
         assert tokens[2] == "FROM"

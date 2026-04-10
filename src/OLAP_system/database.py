@@ -20,10 +20,11 @@ A database is a string-indexed map of tables.
 """
 from typing import Callable
 
+import numpy as np
 import pandas as pd
 
-from OLAP_system import query_lookup
-from OLAP_system.timer import QueryTime, query_times
+from OLAP_system import indexing, query_lookup
+from OLAP_system.timer import QueryTime, query_times, IndexTime, index_times
 
 # A mapping between table names and their respective tables.
 system_information = {}
@@ -37,13 +38,17 @@ class ColumnChunk:
         size (int): The number of values in the chunk.
     """
     MAX_CHUNK_SIZE = 1024
-    def __init__(self, column_chunk: pd.DataFrame):
+    def __init__(self, column_chunk: pd.DataFrame, types: list[str]):
         assert self.MAX_CHUNK_SIZE >= len(column_chunk) > 0 # what is this python syntax O_o
-        self.columns: dict[str, pd.Series] = {}
-        for col in column_chunk.columns:
-            self.columns[col] = column_chunk[col].copy()
+        self.columns: dict[str, np.ndarray] = {}
+        for idx, col in enumerate(column_chunk.columns):
+            if types[idx] == "INTEGER":
+                self.columns[col] = column_chunk[col].to_numpy(dtype=int)
+            else:
+                self.columns[col] = column_chunk[col].to_numpy(dtype=str)
 
         self.size = len(column_chunk)
+        self.zone_map: indexing.ZoneMap | None = None
 
     def filter(self, predicate: Callable[[object, object], bool], args: str):
         # the following is for a vanilla-encoded tuple (type-agnostic)
@@ -67,8 +72,16 @@ class ColumnChunk:
 
         for col in column_names:
             for idx in index:
-                ret.append((idx, self.columns[col].loc[idx]))
+                ret.append((idx, self.columns[col][idx]))
         return ret
+    def make_index(self, column: str, indexer: str):
+        assert column in self.columns
+        match indexer:
+            case "rle":
+                self.columns[column] = indexing.rle_index(self.columns[column])
+            case "zone_map":
+                indexing.zone_map_index(self, column)
+
 
 class Table:
     """Class used for storing csv table data.
@@ -96,7 +109,9 @@ class Table:
                 raise AssertionError(f"Expected CSV with {len(self.column_schema)} columns, got {len(headers)}!")
 
             curr_chunk = pd.DataFrame(columns=headers)
+            types = []
             for col in self.column_schema:
+                types.append(self.column_schema[col][0])
                 if self.column_schema[col][0] == "INTEGER":
                     curr_chunk[col] = pd.to_numeric(curr_chunk[col])
                 else:
@@ -114,12 +129,13 @@ class Table:
 
                 # populate column chunks in database once max capacity is reached
                 if curr_chunk_size == ColumnChunk.MAX_CHUNK_SIZE:
-                    self.chunks.append(ColumnChunk(curr_chunk))
+                    self.chunks.append(ColumnChunk(curr_chunk, types))
                     curr_chunk_size = 0
 
             # insert remaining stub if partially-filled chunk
             if curr_chunk_size > 0:
-                self.chunks.append(ColumnChunk(curr_chunk))
+                self.chunks.append(ColumnChunk(curr_chunk, types))
+
 
     def column_type(self, name: str) -> tuple[str, int]:
         """Returns the type of a column.
@@ -185,7 +201,6 @@ def handle_select(table_name: str, column_names: list[str], predicate: list[str]
     id_qualify = time.time()
 
     res = pd.DataFrame(columns=column_names)
-    num_found = 0
     for chunk in qualified_ids:
         for idx, match in table.chunks[chunk[0]].get_tuple(chunk[1], column_names):
             res.loc[idx] = match
@@ -197,3 +212,19 @@ def handle_select(table_name: str, column_names: list[str], predicate: list[str]
     query_times.append(t)
 
     return res
+
+
+def handle_index(table_name: str, column_name: str, indexer: str):
+    import time
+
+    table = system_information[table_name]
+
+    start = time.time()
+
+    # this will probably be refactored in the event of table-wide indexing.
+    for chunk in table.chunks:
+        chunk.make_index(column_name, indexer)
+    end = time.time()
+
+    t = IndexTime(end - start)
+    index_times.append(t)

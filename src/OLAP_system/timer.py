@@ -2,6 +2,7 @@
 """
 
 query_times = []
+index_times = []
 
 class QueryTime:
     """Class for storing decomposed time data.
@@ -13,3 +14,7 @@ class QueryTime:
     def __init__(self, id_qualify: float, data_store: float):
         self.id_qualify = id_qualify
         self.data_store = data_store
+
+class IndexTime:
+    def __init__(self, time: float):
+        self.time = time

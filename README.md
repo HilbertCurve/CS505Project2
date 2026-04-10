@@ -37,13 +37,13 @@ cat /path/to/test - | python src/repl.py
   - [ ] DB 3 with queries
   - [ ] DB 4 with queries
 - [x] Loader
-- [ ] Baseline Scan
-- [ ] Query Executor
-- [ ] Metrics Layer
+- [x] Baseline Scan
+- [x] Query Executor
+- [x] Metrics Layer
 - Basic techniques:
-  - [ ] Zone maps
+  - [ ] Zone maps - almost there!
   - [ ] Bitmap index
-  - [ ] RLE Compression
+  - [ ] RLE Compression - almost there!
   - [ ] Dictionary encoding
   - [ ] Delta + bit packing
   - [ ] Experimental comparison

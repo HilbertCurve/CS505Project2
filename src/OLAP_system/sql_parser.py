@@ -36,8 +36,7 @@ def parse(sql: str):
     tokens = tokenize(sql)
     if tokens is None:
         raise ValueError("Error while tokenizing sql: regex couldn't match anything!")
-    elif tokens[0] == "CREATE":
-        assert tokens[1] == "TABLE"
+    elif tokens[0] == "CREATE" and tokens[1] == "TABLE":
         table_name = tokens[2]
         columns = {}
         assert tokens[3] == "("
@@ -91,5 +90,18 @@ def parse(sql: str):
         filename = tokens[3]
         database.load_csv(table, filename)
         print("LOAD CSV")
+    elif tokens[0] == "CREATE" and tokens[1] == "INDEX":
+        index_name = tokens[2]
+        assert tokens[3] == "ON"
+        table_name = tokens[4]
+        assert tokens[5] == "("
+        column_name = tokens[6]
+        assert tokens[7] == ")"
+        assert tokens[8] == "USING"
+        indexer = tokens[9]
+        assert tokens[10] == ";"
+
+        database.handle_index(table_name, column_name, indexer)
+        print("CREATE INDEX " + index_name)
     else:
         raise AssertionError(f"Invalid operation string: found {tokens[0]}.")

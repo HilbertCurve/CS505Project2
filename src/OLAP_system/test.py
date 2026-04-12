@@ -21,6 +21,7 @@ def run_tests():
 
     with open("query/tmp.sql") as f:
         for line in f.readlines():
+            print(line)
             sql_parser.parse(line)
 
     print("\t passed.")

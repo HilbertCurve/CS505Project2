@@ -57,6 +57,8 @@ def parse(sql: str):
                 raise AssertionError(f"INTEGER or VARCHAR(n) expected, found {column_type}.")
 
             columns[column_name] = (column_type, column_length)
+            if tokens[mark] == ",":
+                mark += 1
 
         assert tokens[mark + 1] == ";"
         database.create_table(table_name, columns)

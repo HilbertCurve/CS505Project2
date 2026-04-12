@@ -47,21 +47,27 @@ class ColumnChunk:
             else:
                 self.columns[col] = column_chunk[col].to_numpy(dtype=str)
 
-        self.size = len(column_chunk)
-        self.zone_map: indexing.ZoneMap | None = None
+        self.length = len(column_chunk)
+        self.indexes: dict[str, str] = {}
 
     def filter(self, predicate: Callable[[object, object], bool], args: str):
-        # the following is for a vanilla-encoded tuple (type-agnostic)
         # TODO: convert to np.ndarray
         qualified_ids: list[int] = []
-        for idx, value in enumerate(self.columns[args]):
-            if predicate(self, int(value)):
-                qualified_ids.append(idx)
+
+        if args not in self.indexes:
+            # the following is for a vanilla-encoded tuple (type-agnostic)
+            for idx, value in enumerate(self.columns[args]):
+                if predicate(self, int(value)):
+                    qualified_ids.append(idx)
+        else:
+            indexer = self.indexes[args]
+            match indexer:
+                case "rle":
+                    qualified_ids = indexing.rle_filter(self, predicate, args)
+
         return qualified_ids
 
-    def get_tuple(self, index: list[int], column_names: list[str]) -> list[tuple[int, object]]:
-        # the following is for a vanilla-encoded tuple (type-agnostic)
-        ret = []
+    def get_tuple(self, index: list[int], column_names: list[str]) -> pd.DataFrame:
         bad_cols = []
         for col in column_names:
             if col not in self.columns:
@@ -70,10 +76,24 @@ class ColumnChunk:
         if bad_cols:
             raise AssertionError(f"Column(s) '{bad_cols}' not in table.")
 
+        col_matches = pd.DataFrame(columns=column_names)
+
         for col in column_names:
-            for idx in index:
-                ret.append((idx, self.columns[col][idx]))
-        return ret
+            col_match: pd.Series = pd.Series()
+            if col not in self.indexes:
+                # the following is for a vanilla-encoded tuple (type-agnostic)
+                for idx in index:
+                    col_match.loc[col_match.size] = (self.columns[col][idx])
+                    #ret.append((idx, self.columns[col][idx]))
+            else:
+                indexer = self.indexes[col]
+                match indexer:
+                    case "rle":
+                        col_match = indexing.rle_get_tuple(self, index, col)
+            col_matches[col] = col_match
+
+        col_matches.index = index
+        return col_matches
     def make_index(self, column: str, indexer: str):
         assert column in self.columns
         match indexer:
@@ -81,6 +101,10 @@ class ColumnChunk:
                 self.columns[column] = indexing.rle_index(self.columns[column])
             case "zone_map":
                 indexing.zone_map_index(self, column)
+            case _:
+                raise AssertionError("Indexer " + indexer + " not found.")
+        self.indexes[column] = indexer
+
 
 
 class Table:
@@ -192,18 +216,21 @@ def handle_select(table_name: str, column_names: list[str], predicate: list[str]
     func = matcher["func"]
     # TODO: make this np.ndarray
     # In short, this IDs tuples by storing the ID of the chunk alongside the ids of the chunks that match.
-    qualified_ids: list[tuple[int, object]] = []
+
+    qualified_ids = []
     for idx, chunk in enumerate(table.chunks):
         chunk_matches = chunk.filter(func, args)
         if chunk_matches:
-            qualified_ids.append((idx, chunk_matches))
+            qualified_ids.append(chunk_matches)
 
     id_qualify = time.time()
 
     res = pd.DataFrame(columns=column_names)
-    for chunk in qualified_ids:
-        for idx, match in table.chunks[chunk[0]].get_tuple(chunk[1], column_names):
-            res.loc[idx] = match
+    chunk_offset = 0
+    for chunk in enumerate(qualified_ids):
+        qualified_tuples = table.chunks[chunk[0]].get_tuple(chunk[1], column_names)
+        res = pd.concat((res, qualified_tuples))
+        chunk_offset += table.chunks[chunk[0]].length
 
     data_store = time.time()
 

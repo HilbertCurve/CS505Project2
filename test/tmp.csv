@@ -1,7 +1,7 @@
-col1
-10
-20
-30
-100
-200
-300
+col1,name
+10,john
+20,peter
+30,andrew
+100,james
+200,bartholomew
+300,paul

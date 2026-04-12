@@ -1,4 +1,5 @@
-CREATE TABLE foo (col1 INTEGER);
+CREATE TABLE foo (col1 INTEGER, name VARCHAR(20));
 COPY foo FROM test/tmp.csv;
+CREATE INDEX idx ON foo(col1) USING rle;
 SELECT col1 FROM foo WHERE col1 > 100;
-CREATE INDEX idx ON foo(col1) USING zone_map;
+SELECT name FROM foo WHERE col1 > 100;

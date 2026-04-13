@@ -1,0 +1,204 @@
+Generating datasets...
+
+Running hard-coded query evaluation...
+
+Dataset: status_skew
+====================
+
+  Query: eq_status [equality]
+  Predicate: status_code = 0
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                    8357    0.014722           -     10000        0/10         -  baseline            
+  bitmap(status_code)         8357    0.015387    0.000360         0        0/10     30000  bitmap              
+
+  Query: eq_plan [equality]
+  Predicate: plan_tier = 3
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                    1485    0.009322           -     10000        0/10         -  baseline            
+  bitmap(plan_tier)           1485    0.006152    0.000303         0        0/10     30000  bitmap              
+
+  Query: range_balance_selective [selective range]
+  Predicate: account_balance_cents > 3000
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                     432    0.007316           -     10000        0/10         -  baseline            
+
+  Query: range_balance_nonselective [non-selective range]
+  Predicate: account_balance_cents >= 100
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                    8618    0.015981           -     10000        0/10         -  baseline            
+
+  Query: and_status_balance [AND]
+  Predicate: status_code = 2 AND account_balance_cents > 3000
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                     413    0.004911           -     20000        0/10         -  baseline            
+  bitmap(status_code)          413    0.005181    0.000256     10000        0/10     30000  bitmap              
+
+  Query: agg_active_count [aggregation-friendly count]
+  Predicate: is_active = 1
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                    5053    0.056244           -     10000        0/10         -  baseline            
+  bitmap(is_active)           5053    0.007546    0.000223         0        0/10     20000  bitmap              
+
+Dataset: clustered_sorted
+=========================
+
+  Query: eq_warehouse [equality]
+  Predicate: warehouse_id = 100
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                     250    0.000887           -     10000        0/10         -  baseline            
+  rle(warehouse_id)            250    0.000898    0.001737         0        0/10       784  rle                 
+
+  Query: eq_zone [equality]
+  Predicate: warehouse_zone = 'bulk'
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                    2500    0.007184           -     10000        0/10         -  baseline            
+  bitmap(warehouse_zone)      2500    0.006185    0.001916         0        0/10     40000  bitmap              
+
+  Query: range_product_selective [selective range]
+  Predicate: product_id >= 1390200
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                      50    0.000671           -     10000        0/10         -  baseline            
+  zone_map(product_id)          50    0.000754    0.000131       784        9/10       920  zone_map            
+
+  Query: range_restock_nonselective [non-selective range]
+  Predicate: restock_ts >= 1704200000
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                    8566    0.012975           -     10000        0/10         -  baseline            
+  zone_map(restock_ts)        8566    0.010877    0.000095      8976        1/10       920  zone_map            
+
+  Query: and_zone_warehouse [AND]
+  Predicate: warehouse_zone = 'bulk' AND warehouse_id = 100
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                     250    0.001992           -     20000        0/10         -  baseline            
+  bitmap(warehouse_zone)       250    0.001092    0.002284     10000        0/10     40000  bitmap              
+  rle(warehouse_id)            250    0.002096    0.001707     10000        0/10       784  rle                 
+
+  Query: agg_warehouse_count [aggregation-friendly count]
+  Predicate: warehouse_id = 120
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                     250    0.001240           -     10000        0/10         -  baseline            
+  rle(warehouse_id)            250    0.001484    0.002341         0        0/10       784  rle                 
+
+Dataset: uniform_random
+=======================
+
+  Query: eq_terminal [equality]
+  Predicate: terminal_id = 5
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                      93    0.005817           -     10000        0/10         -  baseline            
+
+  Query: eq_category [equality]
+  Predicate: merchant_category = 'travel'
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                    1949    0.008604           -     10000        0/10         -  baseline            
+  bitmap(merchant_category)    1949    0.007713    0.002584         0        0/10     50000  bitmap              
+
+  Query: range_amount_selective [selective range]
+  Predicate: amount_cents >= 245000
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                     202    0.005299           -     10000        0/10         -  baseline            
+
+  Query: range_amount_nonselective [non-selective range]
+  Predicate: amount_cents >= 1000
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                    9963    0.020565           -     10000        0/10         -  baseline            
+
+  Query: and_category_terminal [AND]
+  Predicate: merchant_category = 'grocery' AND terminal_id = 5
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                      21    0.005411           -     20000        0/10         -  baseline            
+  bitmap(merchant_category)      21    0.006854    0.004265     10000        0/10     50000  bitmap              
+
+  Query: agg_terminal_count [aggregation-friendly count]
+  Predicate: terminal_id = 1
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                     112    0.005342           -     10000        0/10         -  baseline            
+
+Dataset: time_series
+====================
+
+  Query: eq_status [equality]
+  Predicate: status_code = 3
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                    2500    0.008581           -     10000        0/10         -  baseline            
+  bitmap(status_code)         2500    0.009184    0.000300         0        0/10     40000  bitmap              
+
+  Query: eq_package [equality]
+  Predicate: package_id = 500100
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                       4    0.001009           -     10000        0/10         -  baseline            
+  rle(package_id)                4    0.003260    0.014037         0        0/10     40000  rle                 
+
+  Query: range_time_selective [selective range]
+  Predicate: event_time >= 1736130000
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                     614    0.001365           -     10000        0/10         -  baseline            
+  zone_map(event_time)         614    0.001033    0.000093       784        9/10       920  zone_map            
+
+  Query: range_time_nonselective [non-selective range]
+  Predicate: event_time >= 1735693200
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                   10000    0.015854           -     10000        0/10         -  baseline            
+  zone_map(event_time)       10000    0.015030    0.000087     10000        0/10       920  baseline            
+
+  Query: and_status_weight [AND]
+  Predicate: status_code = 3 AND package_weight_g > 3000
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                     940    0.006799           -     20000        0/10         -  baseline            
+  bitmap(status_code)          940    0.007432    0.000561     10000        0/10     40000  bitmap              
+
+  Query: agg_status_count [aggregation-friendly count]
+  Predicate: status_code = 0
+  --------------------------------------------------------------------------------------------------------------
+  Mode                        Rows      Q Time       Build   Scanned     Skipped     Bytes  Used                
+  --------------------------------------------------------------------------------------------------------------
+  baseline                    2500    0.013654           -     10000        0/10         -  baseline            
+  bitmap(status_code)         2500    0.006402    0.000300         0        0/10     40000  bitmap              
+
+All hard-coded evaluations passed.

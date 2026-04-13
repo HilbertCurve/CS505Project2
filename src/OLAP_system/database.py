@@ -1,45 +1,186 @@
-"""Classes and routines for loading data from storage into the in-memory database.
+"""Classes and routines for loading data into the in-memory OLAP store."""
 
-The data is stored in a columnar format and only supports integer and string
-types. The following will NOT be supported:
-- Updates or post-load inserts
-- Joins
-- Off-disk storage
+from __future__ import annotations
 
-Here is the design specification for the database we are creating:
-
-Column segments store a certain type. It is equivalent to an immutable list of a
-certain type and length.
-
-A column is a contiguous storage of column segments.
-
-A table is a string-indexed map of columns whose length are all
-equivalent.
-
-A database is a string-indexed map of tables.
-"""
-from typing import Callable
-
+from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from OLAP_system import indexing, query_lookup
-from OLAP_system.timer import QueryTime, query_times, IndexTime, index_times
+from OLAP_system.structures import bitmap_index, rle, zone_map
+from OLAP_system.timer import IndexTime, QueryTime, record_index, record_query
 
 # A mapping between table names and their respective tables.
 system_information = {}
 
-class ColumnChunk:
-    """Represents a fixed-size chunk of a column in a table.
 
-    Attributes:
-        MAX_CHUNK_SIZE (int): A constant for the max size of a chunk,
-        columns (dict): An association between column names and their internal data,
-        size (int): The number of values in the chunk.
-    """
+@dataclass
+class PredicateClause:
+    """One simple comparison predicate."""
+
+    column: str
+    operator: str
+    value: object
+
+
+@dataclass
+class ClauseNode:
+    clause: PredicateClause
+
+
+@dataclass
+class UnaryNode:
+    operator: str
+    child: object
+
+
+@dataclass
+class BinaryNode:
+    operator: str
+    left: object
+    right: object
+
+
+@dataclass
+class QueryRuntime:
+    """Mutable counters accumulated during query evaluation."""
+
+    segments_total: int = 0
+    segments_skipped: int = 0
+    rows_scanned: int = 0
+    bytes_read: int = 0
+    bitmap_lookups: int = 0
+    bitmap_ops: int = 0
+    zone_map_prunes: int = 0
+    zone_map_used: bool = False
+    bitmap_used: bool = False
+    rle_used: bool = False
+
+
+def _parse_literal(token: str) -> object:
+    if token.startswith(("'", '"')) and token.endswith(("'", '"')):
+        return token[1:-1]
+
+    try:
+        return int(token)
+    except ValueError:
+        return token
+
+
+def parse_predicate_tokens(tokens: list[str]) -> ClauseNode | UnaryNode | BinaryNode | None:
+    """Parse a flat WHERE token list into a small expression tree."""
+    if not tokens:
+        return None
+
+    index = 0
+
+    def parse_factor():
+        nonlocal index
+        if index >= len(tokens):
+            raise AssertionError("Unexpected end of predicate.")
+
+        if tokens[index].upper() == "NOT":
+            index += 1
+            return UnaryNode("NOT", parse_factor())
+
+        if index + 2 >= len(tokens):
+            raise AssertionError("Incomplete predicate clause.")
+
+        clause = ClauseNode(
+            PredicateClause(
+                column=tokens[index],
+                operator=tokens[index + 1].upper(),
+                value=_parse_literal(tokens[index + 2]),
+            )
+        )
+        index += 3
+        return clause
+
+    def parse_term():
+        nonlocal index
+        node = parse_factor()
+        while index < len(tokens) and tokens[index].upper() == "AND":
+            index += 1
+            node = BinaryNode("AND", node, parse_factor())
+        return node
+
+    def parse_expression():
+        nonlocal index
+        node = parse_term()
+        while index < len(tokens) and tokens[index].upper() == "OR":
+            index += 1
+            node = BinaryNode("OR", node, parse_term())
+        return node
+
+    tree = parse_expression()
+    if index != len(tokens):
+        raise AssertionError(f"Unexpected predicate token '{tokens[index]}'.")
+    return tree
+
+
+def _compare_scalar(value, operator: str, target) -> bool:
+    operator = operator.upper()
+    if operator == "=":
+        return value == target
+    if operator == ">":
+        return value > target
+    if operator == ">=":
+        return value >= target
+    if operator == "<":
+        return value < target
+    if operator == "<=":
+        return value <= target
+    raise AssertionError(f"Unsupported operator '{operator}'.")
+
+
+def _compare_array(values: np.ndarray, operator: str, target) -> np.ndarray:
+    operator = operator.upper()
+    if operator == "=":
+        return values == target
+    if operator == ">":
+        return values > target
+    if operator == ">=":
+        return values >= target
+    if operator == "<":
+        return values < target
+    if operator == "<=":
+        return values <= target
+    raise AssertionError(f"Unsupported operator '{operator}'.")
+
+
+def _normalize_value(value):
+    return value.item() if hasattr(value, "item") else value
+
+
+def _expression_can_skip(chunk, node) -> bool:
+    """Return whether the full predicate is impossible for this chunk."""
+    if node is None:
+        return False
+
+    if isinstance(node, ClauseNode):
+        clause = node.clause
+        if clause.column in chunk.zone_maps:
+            return zone_map.can_skip(chunk.zone_maps[clause.column], clause.operator, clause.value)
+        return False
+
+    if isinstance(node, UnaryNode):
+        return False
+
+    if isinstance(node, BinaryNode):
+        if node.operator == "AND":
+            return _expression_can_skip(chunk, node.left) or _expression_can_skip(chunk, node.right)
+        if node.operator == "OR":
+            return _expression_can_skip(chunk, node.left) and _expression_can_skip(chunk, node.right)
+
+    return False
+
+
+class ColumnChunk:
+    """Represents a fixed-size chunk of a table."""
+
     MAX_CHUNK_SIZE = 1024
+
     def __init__(self, column_chunk: pd.DataFrame, types: list[str]):
-        assert self.MAX_CHUNK_SIZE >= len(column_chunk) > 0 # what is this python syntax O_o
+        assert self.MAX_CHUNK_SIZE >= len(column_chunk) > 0
         self.columns: dict[str, np.ndarray] = {}
         for idx, col in enumerate(column_chunk.columns):
             if types[idx] == "INTEGER":
@@ -49,73 +190,113 @@ class ColumnChunk:
 
         self.length = len(column_chunk)
         self.indexes: dict[str, str] = {}
+        self.index_sizes: dict[tuple[str, str], int] = {}
+        self.zone_maps: dict[str, zone_map.ZoneMap] = {}
+        self.bitmap_indexes: dict[str, bitmap_index.BitmapIndex] = {}
+        self.rle_indexes: dict[str, np.ndarray] = {}
 
-    def filter(self, predicate: Callable[[object, object], bool], args: str):
-        # TODO: convert to np.ndarray
-        qualified_ids: list[int] = []
+    def _scan_clause(self, clause: PredicateClause, runtime: QueryRuntime) -> np.ndarray:
+        values = self.columns[clause.column]
+        runtime.rows_scanned += self.length
+        runtime.bytes_read += int(values.nbytes)
+        return _compare_array(values, clause.operator, clause.value)
 
-        if args not in self.indexes:
-            # the following is for a vanilla-encoded tuple (type-agnostic)
-            for idx, value in enumerate(self.columns[args]):
-                if predicate(self, int(value)):
-                    qualified_ids.append(idx)
-        else:
-            indexer = self.indexes[args]
-            match indexer:
-                case "rle":
-                    qualified_ids = indexing.rle_filter(self, predicate, args)
+    def _evaluate_clause(self, clause: PredicateClause, runtime: QueryRuntime) -> np.ndarray:
+        if clause.column not in self.columns:
+            raise AssertionError(f"Column '{clause.column}' not in table.")
 
-        return qualified_ids
+        if clause.column in self.bitmap_indexes and clause.operator == "=":
+            bitmap, lookups = bitmap_index.filter_chunk(self.bitmap_indexes[clause.column], clause.value)
+            runtime.bitmap_lookups += lookups
+            runtime.bitmap_used = True
+            return bitmap
+
+        if clause.column in self.rle_indexes:
+            match_indices = rle.filter_chunk(self, clause.operator, clause.value, clause.column)
+            runtime.rle_used = True
+            bitmap = np.zeros(self.length, dtype=bool)
+            bitmap[match_indices] = True
+            return bitmap
+
+        if clause.column in self.zone_maps and zone_map.can_skip(
+            self.zone_maps[clause.column], clause.operator, clause.value
+        ):
+            runtime.zone_map_prunes += 1
+            runtime.zone_map_used = True
+            return np.zeros(self.length, dtype=bool)
+
+        return self._scan_clause(clause, runtime)
+
+    def evaluate_predicate(self, node, runtime: QueryRuntime) -> np.ndarray:
+        """Evaluate a parsed predicate tree for this chunk."""
+        if node is None:
+            return np.ones(self.length, dtype=bool)
+
+        if isinstance(node, ClauseNode):
+            return self._evaluate_clause(node.clause, runtime)
+
+        if isinstance(node, UnaryNode):
+            child = self.evaluate_predicate(node.child, runtime)
+            runtime.bitmap_ops += 1
+            return ~child
+
+        if isinstance(node, BinaryNode):
+            left = self.evaluate_predicate(node.left, runtime)
+            right = self.evaluate_predicate(node.right, runtime)
+            runtime.bitmap_ops += 1
+            if node.operator == "AND":
+                return left & right
+            if node.operator == "OR":
+                return left | right
+            raise AssertionError(f"Unsupported boolean operator '{node.operator}'.")
+
+        raise AssertionError("Unsupported predicate node.")
 
     def get_tuple(self, index: list[int], column_names: list[str]) -> pd.DataFrame:
-        bad_cols = []
-        for col in column_names:
-            if col not in self.columns:
-                bad_cols.append(col)
+        if column_names == ["*"]:
+            column_names = list(self.columns.keys())
 
+        bad_cols = [col for col in column_names if col not in self.columns]
         if bad_cols:
             raise AssertionError(f"Column(s) '{bad_cols}' not in table.")
 
-        col_matches = pd.DataFrame(columns=column_names)
+        col_matches = pd.DataFrame(index=index)
 
         for col in column_names:
-            col_match: pd.Series = pd.Series()
-            if col not in self.indexes:
-                # the following is for a vanilla-encoded tuple (type-agnostic)
-                for idx in index:
-                    col_match.loc[col_match.size] = (self.columns[col][idx])
-                    #ret.append((idx, self.columns[col][idx]))
+            if self.indexes.get(col) == "rle":
+                col_match = rle.get_tuple(self.rle_indexes[col], index)
             else:
-                indexer = self.indexes[col]
-                match indexer:
-                    case "rle":
-                        col_match = indexing.rle_get_tuple(self, index, col)
-            col_matches[col] = col_match
+                col_match = pd.Series(self.columns[col][index], index=index)
+            col_matches[col] = col_match.to_list()
 
-        col_matches.index = index
         return col_matches
-    def make_index(self, column: str, indexer: str):
+
+    def make_index(self, column: str, indexer: str) -> int:
         assert column in self.columns
+        indexer = indexer.lower()
+
         match indexer:
             case "rle":
-                self.columns[column] = indexing.rle_index(self.columns[column])
+                encoded = rle.build_index(self.columns[column])
+                self.rle_indexes[column] = encoded
+                size = rle.size_bytes(encoded)
             case "zone_map":
-                indexing.zone_map_index(self, column)
+                metadata = zone_map.build_index(self, column)
+                size = zone_map.size_bytes(metadata)
+            case "bitmap":
+                metadata = bitmap_index.build_index(self, column)
+                size = bitmap_index.size_bytes(metadata)
             case _:
-                raise AssertionError("Indexer " + indexer + " not found.")
-        self.indexes[column] = indexer
+                raise AssertionError(f"Indexer {indexer} not found.")
 
+        self.indexes[column] = indexer
+        self.index_sizes[(column, indexer)] = size
+        return size
 
 
 class Table:
-    """Class used for storing csv table data.
+    """Class used for storing CSV table data."""
 
-    Attributes:
-        name (str): The table's identifier,
-        column_schema (dict): The mapping from column names to the type of the column,
-        chunks (dict): A mapping of column names to the internal storage of that column,
-        length (int): The number of tuples in the table.
-    """
     def __len__(self):
         return self.length
 
@@ -126,8 +307,7 @@ class Table:
         self.length: int = 0
 
     def load_csv(self, path: str):
-        with open(path) as f:
-            # initialize empty column chunks
+        with open(path, encoding="utf-8") as f:
             headers = f.readline().strip().split(",")
             if len(headers) != len(self.column_schema):
                 raise AssertionError(f"Expected CSV with {len(self.column_schema)} columns, got {len(headers)}!")
@@ -143,7 +323,6 @@ class Table:
 
             curr_chunk_size = 0
 
-            # populate columns
             for line in f:
                 cols = line.strip().split(",")
                 curr_chunk.loc[curr_chunk_size] = cols
@@ -151,107 +330,127 @@ class Table:
                 curr_chunk_size += 1
                 self.length += 1
 
-                # populate column chunks in database once max capacity is reached
                 if curr_chunk_size == ColumnChunk.MAX_CHUNK_SIZE:
                     self.chunks.append(ColumnChunk(curr_chunk, types))
+                    curr_chunk = pd.DataFrame(columns=headers)
+                    for col in self.column_schema:
+                        if self.column_schema[col][0] == "INTEGER":
+                            curr_chunk[col] = pd.to_numeric(curr_chunk[col])
+                        else:
+                            curr_chunk[col] = curr_chunk[col].astype(str)
                     curr_chunk_size = 0
 
-            # insert remaining stub if partially-filled chunk
             if curr_chunk_size > 0:
                 self.chunks.append(ColumnChunk(curr_chunk, types))
 
-
     def column_type(self, name: str) -> tuple[str, int]:
-        """Returns the type of a column.
-
-        The type is stored as a tuple. The first entry in the tuple is a string that takes two values, "INTEGER" or
-        "VARCHAR". If "VARCHAR" is stored, the second value is the length of the VARCHAR. Otherwise, None is stored.
-        """
         return self.column_schema[name]
 
-def create_table(table_name: str, columns: dict):
-    """Create a table with preset columns.
 
-    Args:
-        table_name (str): The SQL-viable name of the table,
-        columns (dict): A mapping of column names to the type of the column,
-            which itself is a map, mapping "INTEGER" to None and "VARCHAR" to the
-            column's length in characters.
-    """
+def create_table(table_name: str, columns: dict):
+    """Create a table with preset columns."""
     system_information[table_name] = Table(table_name, columns)
 
-def load_csv(table_name: str, filename: str):
-    """Loads a csv file from disk into in-memory storage.
 
-    Note: this does not perform any checking on the inputted column formats or
-    names. Please do so yourself!
-    """
+def load_csv(table_name: str, filename: str):
+    """Load a CSV file into the in-memory database."""
     if table_name not in system_information:
         raise AssertionError(f"Table '{table_name}' not created yet.")
     system_information[table_name].load_csv(filename)
 
+
+def reset_database():
+    """Clear all in-memory tables."""
+    system_information.clear()
+
+
 def print_summary():
     print(f"ColumnChunk.MAX_CHUNK_SIZE: {ColumnChunk.MAX_CHUNK_SIZE}.")
-    for table in system_information:
-        print(f"{table}: {len(system_information[table].chunks)} chunks.")
-        print(f"\tcols: {system_information[table].column_schema}.")
+    for table in system_information.values():
+        print(f"{table.name}: {len(table.chunks)} chunks.")
+        print(f"\tcols: {table.column_schema}.")
 
 
 def handle_select(table_name: str, column_names: list[str], predicate: list[str]):
-    """Processes a select query, returning qualified values .
-
-    Args:
-        table_name (str): The name of the table previously made with CREATE TABLE,
-        column_names (list[str]): A list of columns to be returned from this query,
-        predicate: (list[str]): A list of tokens to be interpreted for this query.
-    """
-
+    """Process a SELECT query and return qualifying tuples."""
     import time
 
     start = time.time()
     table = system_information[table_name]
-    predicate_key = " ".join(predicate)
-    matcher = query_lookup.simple_query_lookup[predicate_key]
-    args = matcher["args"]
-    func = matcher["func"]
-    # TODO: make this np.ndarray
-    # In short, this IDs tuples by storing the ID of the chunk alongside the ids of the chunks that match.
+    predicate_tree = parse_predicate_tokens(predicate)
 
-    qualified_ids = []
-    for idx, chunk in enumerate(table.chunks):
-        chunk_matches = chunk.filter(func, args)
-        if chunk_matches:
-            qualified_ids.append(chunk_matches)
+    runtime = QueryRuntime(segments_total=len(table.chunks))
+    qualified_ids: list[tuple[int, list[int]]] = []
+    for chunk_id, chunk in enumerate(table.chunks):
+        if _expression_can_skip(chunk, predicate_tree):
+            runtime.segments_skipped += 1
+            runtime.zone_map_used = True
+            continue
+
+        if predicate_tree is None:
+            chunk_matches = np.ones(chunk.length, dtype=bool)
+        else:
+            chunk_matches = chunk.evaluate_predicate(predicate_tree, runtime)
+
+        match_indices = np.flatnonzero(chunk_matches).tolist()
+        if match_indices:
+            qualified_ids.append((chunk_id, match_indices))
 
     id_qualify = time.time()
 
-    res = pd.DataFrame(columns=column_names)
-    chunk_offset = 0
-    for chunk in enumerate(qualified_ids):
-        qualified_tuples = table.chunks[chunk[0]].get_tuple(chunk[1], column_names)
+    res = pd.DataFrame()
+    for chunk_id, indexes in qualified_ids:
+        qualified_tuples = table.chunks[chunk_id].get_tuple(indexes, column_names)
         res = pd.concat((res, qualified_tuples))
-        chunk_offset += table.chunks[chunk[0]].length
 
     data_store = time.time()
 
-    t = QueryTime(id_qualify - start, data_store - id_qualify)
+    index_types_used = []
+    if runtime.bitmap_used:
+        index_types_used.append("bitmap")
+    if runtime.rle_used:
+        index_types_used.append("rle")
+    if runtime.zone_map_used:
+        index_types_used.append("zone_map")
 
-    query_times.append(t)
+    metric = QueryTime(
+        id_qualify=id_qualify - start,
+        data_store=data_store - id_qualify,
+        total_time=data_store - start,
+        index_used=", ".join(index_types_used) if index_types_used else "baseline",
+        segments_total=runtime.segments_total,
+        segments_skipped=runtime.segments_skipped,
+        rows_scanned=runtime.rows_scanned,
+        rows_matched=len(res),
+        bytes_read=runtime.bytes_read,
+        bitmap_lookups=runtime.bitmap_lookups,
+        bitmap_ops=runtime.bitmap_ops,
+        false_positives=0,
+    )
+    record_query(metric)
 
     return res
 
 
 def handle_index(table_name: str, column_name: str, indexer: str):
+    """Build one index structure across all chunks of a table."""
     import time
 
     table = system_information[table_name]
-
     start = time.time()
 
-    # this will probably be refactored in the event of table-wide indexing.
+    total_bytes = 0
     for chunk in table.chunks:
-        chunk.make_index(column_name, indexer)
-    end = time.time()
+        total_bytes += chunk.make_index(column_name, indexer)
 
-    t = IndexTime(end - start)
-    index_times.append(t)
+    end = time.time()
+    metric = IndexTime(
+        time=end - start,
+        index_type=indexer.lower(),
+        table_name=table_name,
+        column_name=column_name,
+        chunks_indexed=len(table.chunks),
+        bytes_used=total_bytes,
+    )
+    record_index(metric)
+    return metric

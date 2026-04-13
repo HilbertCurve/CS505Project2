@@ -228,7 +228,7 @@ def generate_all_datasets(rows: int = DEFAULT_ROW_COUNT, output_dir: Path = OUTP
     # Register the four datasets and their schemas
     datasets = [
         (
-            "dataset_status_skew.csv",
+            "subscription_accounts.csv",
             [
                 "account_id",
                 "is_active",
@@ -242,7 +242,7 @@ def generate_all_datasets(rows: int = DEFAULT_ROW_COUNT, output_dir: Path = OUTP
             build_customer_accounts(rows),
         ),
         (
-            "dataset_clustered_sorted.csv",
+            "warehouse_inventory.csv",
             [
                 "inventory_id",
                 "warehouse_id",
@@ -256,7 +256,7 @@ def generate_all_datasets(rows: int = DEFAULT_ROW_COUNT, output_dir: Path = OUTP
             build_warehouse_inventory(rows),
         ),
         (
-            "dataset_uniform_random.csv",
+            "payment_authorizations.csv",
             [
                 "auth_id",
                 "merchant_id",
@@ -268,7 +268,7 @@ def generate_all_datasets(rows: int = DEFAULT_ROW_COUNT, output_dir: Path = OUTP
             build_payment_authorizations(rows),
         ),
         (
-            "dataset_time_series.csv",
+            "shipment_tracking.csv",
             [
                 "shipment_event_id",
                 "event_time",

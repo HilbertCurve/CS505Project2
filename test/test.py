@@ -1,5 +1,11 @@
-"""Entry point for all test cases in this DBMS project.
-"""
+"""Entry point for all test cases in this DBMS project."""
+
+from pathlib import Path
+import sys
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT_DIR / "src"))
+
 import OLAP_system.sql_parser as sql_parser
 
 def run_tests():

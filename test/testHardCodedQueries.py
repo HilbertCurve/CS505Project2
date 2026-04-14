@@ -18,14 +18,15 @@ import OLAP_system.timer as timer
 
 REPORT_PATH = ROOT_DIR / "test" / "hardCodedQueries_report.txt"
 TABLE_HEADER = (
-    f"{'Mode':<24}"
+    f"{'Mode':<35}"
     f"{'Rows':>8}  "
     f"{'Q Time':>10}  "
     f"{'Build':>10}  "
     f"{'Scanned':>8}  "
     f"{'Skipped':>10}  "
-    f"{'Bytes':>8}  "
-    f"{'Used':<20}"
+    f"{'BM Ops':>8}  "
+    f"{'FP Rate':>10}  "
+    f"{'Bytes':>8}"
 )
 
 
@@ -54,21 +55,34 @@ def format_result_row(
     build,
     scanned,
     skipped,
+    bitmap_ops,
+    false_positive_rate,
     bytes_used,
-    used,
 ) -> str:
     build_str = "-" if build is None else f"{build:.6f}"
+    skipped_str = "-" if skipped is None else skipped
+    bitmap_ops_str = "-" if bitmap_ops is None else str(bitmap_ops)
+    false_positive_str = "-" if false_positive_rate is None else f"{false_positive_rate:.2%}"
     bytes_str = "-" if bytes_used is None else str(bytes_used)
     return (
-        f"{mode:<24}"
+        f"{mode:<35}"
         f"{rows:>8}  "
         f"{q_time:>10.6f}  "
         f"{build_str:>10}  "
         f"{scanned:>8}  "
-        f"{skipped:>10}  "
-        f"{bytes_str:>8}  "
-        f"{used:<20}"
+        f"{skipped_str:>10}  "
+        f"{bitmap_ops_str:>8}  "
+        f"{false_positive_str:>10}  "
+        f"{bytes_str:>8}"
     )
+
+
+def false_positive_rate(metric) -> float | None:
+    if metric.false_positives <= 0:
+        return None
+    if metric.rows_scanned <= 0:
+        return None
+    return metric.false_positives / metric.rows_scanned
 
 
 def run_baseline(dataset_spec: DatasetSpec, query_spec: QuerySpec):
@@ -79,13 +93,24 @@ def run_baseline(dataset_spec: DatasetSpec, query_spec: QuerySpec):
     return result, metric
 
 
-def run_indexed(dataset_spec: DatasetSpec, query_spec: QuerySpec, indexer: str, column: str):
+def format_run_label(run_spec: list[tuple[str, str]]) -> str:
+    return "+".join(f"{indexer}({column})" for indexer, column in run_spec)
+
+
+def run_indexed(dataset_spec: DatasetSpec, query_spec: QuerySpec, run_spec: list[tuple[str, str]]):
     load_dataset(dataset_spec)
-    build_metric = database.handle_index(dataset_spec.table_name, column, indexer)
+    build_time = 0.0
+    build_bytes = 0
+    build_types = []
+    for indexer, column in run_spec:
+        build_metric = database.handle_index(dataset_spec.table_name, column, indexer)
+        build_time += build_metric.time
+        build_bytes += build_metric.bytes_used
+        build_types.append(build_metric.index_type)
     result = database.handle_select(dataset_spec.table_name, query_spec.select_columns, query_spec.predicate)
     query_metric = timer.last_query_time
     assert query_metric is not None
-    return result, build_metric, query_metric
+    return result, build_time, build_bytes, build_types, query_metric
 
 
 def evaluate_query(dataset_spec: DatasetSpec, query_spec: QuerySpec) -> None:
@@ -108,36 +133,53 @@ def evaluate_query(dataset_spec: DatasetSpec, query_spec: QuerySpec) -> None:
                 baseline_metric.total_time,
                 None,
                 baseline_metric.rows_scanned,
-                f"{baseline_metric.segments_skipped}/{baseline_metric.segments_total}",
+                (
+                    f"{baseline_metric.segments_skipped}/{baseline_metric.segments_total}"
+                    if "zone_map" in baseline_metric.index_used
+                    else None
+                ),
+                baseline_metric.bitmap_ops if baseline_metric.bitmap_ops > 0 else None,
+                (
+                    false_positive_rate(baseline_metric)
+                    if "imprints" in baseline_metric.index_used or "sketches" in baseline_metric.index_used
+                    else None
+                ),
                 None,
-                baseline_metric.index_used,
             ),
         ]
     )
 
-    for indexer, column in query_spec.structures:
-        indexed_result, build_metric, query_metric = run_indexed(dataset_spec, query_spec, indexer, column)
+    for run_spec in query_spec.runs:
+        indexed_result, build_time, build_bytes, build_types, query_metric = run_indexed(dataset_spec, query_spec, run_spec)
         indexed_ids = result_ids(indexed_result, id_column)
 
         assert indexed_ids == baseline_ids, (
             f"Mismatch for dataset={dataset_spec.name}, query={query_spec.name}, "
-            f"index={indexer}({column})"
+            f"run={format_run_label(run_spec)}"
         )
-        assert build_metric.index_type == indexer
-        assert build_metric.bytes_used > 0
+        assert build_bytes > 0
 
         append_report(
             [
                 "  "
                 + format_result_row(
-                    f"{indexer}({column})",
+                    format_run_label(run_spec),
                     query_metric.rows_matched,
                     query_metric.total_time,
-                    build_metric.time,
+                    build_time,
                     query_metric.rows_scanned,
-                    f"{query_metric.segments_skipped}/{query_metric.segments_total}",
-                    build_metric.bytes_used,
-                    query_metric.index_used,
+                    (
+                        f"{query_metric.segments_skipped}/{query_metric.segments_total}"
+                        if "zone_map" in query_metric.index_used
+                        else None
+                    ),
+                    query_metric.bitmap_ops if "bitmap" in query_metric.index_used else None,
+                    (
+                        false_positive_rate(query_metric)
+                        if "imprints" in query_metric.index_used or "sketches" in query_metric.index_used
+                        else None
+                    ),
+                    build_bytes,
                 )
             ]
         )
@@ -156,7 +198,7 @@ def run_suite() -> None:
     assert len(dataset_specs) >= 4
 
     for dataset_spec in dataset_specs:
-        append_report([f"Dataset: {dataset_spec.name}", "=" * (9 + len(dataset_spec.name)), ""])
+        append_report(["", "", "=" * (9 + len(dataset_spec.name)), f"Dataset: {dataset_spec.name}", "=" * (9 + len(dataset_spec.name)), ""])
         assert dataset_spec.path.exists(), f"Missing dataset: {dataset_spec.path}"
         assert len(dataset_spec.queries) >= 6
 

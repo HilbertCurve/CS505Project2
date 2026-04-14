@@ -141,7 +141,7 @@ def build_warehouse_inventory(rows: int) -> list[list[object]]:
 def build_payment_authorizations(rows: int) -> list[list[object]]:
     # Dataset 3: payment authorization attempts
     # - auth_id identifies the authorization request
-    # - merchant_id, card_hash, amount_cents, and response_ms are sampled from
+    # - merchant_id, card_hash, and amount_cents are sampled from
     #   large uniform domains
     # - terminal_id is a smaller location/device bucket
     #
@@ -154,6 +154,7 @@ def build_payment_authorizations(rows: int) -> list[list[object]]:
         merchant_id = RNG.randint(100_000, 999_999)
         card_hash = RNG.randint(1, 999_999)
         amount_cents = RNG.randint(100, 250_000)
+        
         merchant_category = ["grocery", "fuel", "travel", "retail", "restaurant"][merchant_id % 5]
 
         # A smaller uniformly random terminal id acts like a store/device bucket

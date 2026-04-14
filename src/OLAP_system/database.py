@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from OLAP_system.structures import bitmap_index, rle, zone_map
+from OLAP_system.structures import bitmap_index, column_imprints, column_sketches, rle, zone_map
 from OLAP_system.timer import IndexTime, QueryTime, record_index, record_query
 
 # A mapping between table names and their respective tables.
@@ -54,6 +54,9 @@ class QueryRuntime:
     zone_map_used: bool = False
     bitmap_used: bool = False
     rle_used: bool = False
+    imprints_used: bool = False
+    sketches_used: bool = False
+    false_positives: int = 0
 
 
 def _parse_literal(token: str) -> object:
@@ -194,6 +197,8 @@ class ColumnChunk:
         self.zone_maps: dict[str, zone_map.ZoneMap] = {}
         self.bitmap_indexes: dict[str, bitmap_index.BitmapIndex] = {}
         self.rle_indexes: dict[str, np.ndarray] = {}
+        self.imprint_indexes: dict[str, column_imprints.ColumnImprints] = {}
+        self.sketch_indexes: dict[str, column_sketches.ColumnSketches] = {}
 
     def _scan_clause(self, clause: PredicateClause, runtime: QueryRuntime) -> np.ndarray:
         values = self.columns[clause.column]
@@ -214,6 +219,30 @@ class ColumnChunk:
         if clause.column in self.rle_indexes:
             match_indices = rle.filter_chunk(self, clause.operator, clause.value, clause.column)
             runtime.rle_used = True
+            bitmap = np.zeros(self.length, dtype=bool)
+            bitmap[match_indices] = True
+            return bitmap
+
+        if clause.column in self.imprint_indexes:
+            match_indices, false_positives = column_imprints.filter_chunk(
+                self.imprint_indexes[clause.column], clause.operator, clause.value, self.columns[clause.column]
+            )
+            runtime.imprints_used = True
+            runtime.false_positives += false_positives
+            runtime.rows_scanned += int(false_positives + len(match_indices))
+            runtime.bytes_read += int((false_positives + len(match_indices)) * self.columns[clause.column].dtype.itemsize)
+            bitmap = np.zeros(self.length, dtype=bool)
+            bitmap[match_indices] = True
+            return bitmap
+
+        if clause.column in self.sketch_indexes:
+            match_indices, false_positives = column_sketches.filter_chunk(
+                self.sketch_indexes[clause.column], clause.operator, clause.value, self.columns[clause.column]
+            )
+            runtime.sketches_used = True
+            runtime.false_positives += false_positives
+            runtime.rows_scanned += int(false_positives + len(match_indices))
+            runtime.bytes_read += int((false_positives + len(match_indices)) * self.columns[clause.column].dtype.itemsize)
             bitmap = np.zeros(self.length, dtype=bool)
             bitmap[match_indices] = True
             return bitmap
@@ -286,6 +315,12 @@ class ColumnChunk:
             case "bitmap":
                 metadata = bitmap_index.build_index(self, column)
                 size = bitmap_index.size_bytes(metadata)
+            case "imprints" | "column_imprints":
+                metadata = column_imprints.build_index(self, column)
+                size = column_imprints.size_bytes(metadata)
+            case "sketches" | "column_sketches":
+                metadata = column_sketches.build_index(self, column)
+                size = column_sketches.size_bytes(metadata)
             case _:
                 raise AssertionError(f"Indexer {indexer} not found.")
 
@@ -408,8 +443,12 @@ def handle_select(table_name: str, column_names: list[str], predicate: list[str]
     index_types_used = []
     if runtime.bitmap_used:
         index_types_used.append("bitmap")
+    if runtime.imprints_used:
+        index_types_used.append("imprints")
     if runtime.rle_used:
         index_types_used.append("rle")
+    if runtime.sketches_used:
+        index_types_used.append("sketches")
     if runtime.zone_map_used:
         index_types_used.append("zone_map")
 
@@ -425,7 +464,7 @@ def handle_select(table_name: str, column_names: list[str], predicate: list[str]
         bytes_read=runtime.bytes_read,
         bitmap_lookups=runtime.bitmap_lookups,
         bitmap_ops=runtime.bitmap_ops,
-        false_positives=0,
+        false_positives=runtime.false_positives,
     )
     record_query(metric)
 

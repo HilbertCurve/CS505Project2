@@ -13,7 +13,7 @@ class QuerySpec:
     name: str
     select_columns: list[str]
     predicate: list[str]
-    structures: list[tuple[str, str]]
+    runs: list[list[tuple[str, str]]]
     notes: str
 
 
@@ -47,12 +47,12 @@ def build_dataset_specs(root_dir: Path) -> list[DatasetSpec]:
                 "account_balance_cents": ("INTEGER", None),
             },
             queries=[
-                QuerySpec("eq_status", ["account_id"], ["status_code", "=", "0"], [("bitmap", "status_code")], "equality"),
-                QuerySpec("eq_plan", ["account_id"], ["plan_tier", "=", "3"], [("bitmap", "plan_tier")], "equality"),
-                QuerySpec("range_balance_selective", ["account_id"], ["account_balance_cents", ">", "3000"], [], "selective range"),
+                QuerySpec("eq_status", ["account_id"], ["status_code", "=", "0"], [[("bitmap", "status_code")]], "equality"),
+                QuerySpec("eq_plan", ["account_id"], ["plan_tier", "=", "3"], [[("bitmap", "plan_tier")]], "equality"),
+                QuerySpec("range_balance_selective", ["account_id"], ["account_balance_cents", ">=", "400000"], [[("imprints", "account_balance_cents")], [("sketches", "account_balance_cents")]], "selective outlier range"),
                 QuerySpec("range_balance_nonselective", ["account_id"], ["account_balance_cents", ">=", "100"], [], "non-selective range"),
-                QuerySpec("and_status_balance", ["account_id"], ["status_code", "=", "2", "AND", "account_balance_cents", ">", "3000"], [("bitmap", "status_code")], "AND"),
-                QuerySpec("agg_active_count", ["account_id"], ["is_active", "=", "1"], [("bitmap", "is_active")], "aggregation-friendly count"),
+                QuerySpec("and_status_plan", ["account_id"], ["status_code", "=", "2", "AND", "plan_tier", "=", "3"], [[("bitmap", "status_code"), ("bitmap", "plan_tier")]], "AND with bitmap on both sides"),
+                QuerySpec("agg_active_count", ["account_id"], ["is_active", "=", "1"], [[("bitmap", "is_active")]], "aggregation-friendly count"),
             ],
         ),
         DatasetSpec(
@@ -70,12 +70,12 @@ def build_dataset_specs(root_dir: Path) -> list[DatasetSpec]:
                 "restock_ts": ("INTEGER", None),
             },
             queries=[
-                QuerySpec("eq_warehouse", ["inventory_id"], ["warehouse_id", "=", "100"], [("rle", "warehouse_id")], "equality"),
-                QuerySpec("eq_zone", ["inventory_id"], ["warehouse_zone", "=", "'bulk'"], [("bitmap", "warehouse_zone")], "equality"),
-                QuerySpec("range_product_selective", ["inventory_id"], ["product_id", ">=", "1390200"], [("zone_map", "product_id")], "selective range"),
-                QuerySpec("range_restock_nonselective", ["inventory_id"], ["restock_ts", ">=", "1704200000"], [("zone_map", "restock_ts")], "non-selective range"),
-                QuerySpec("and_zone_warehouse", ["inventory_id"], ["warehouse_zone", "=", "'bulk'", "AND", "warehouse_id", "=", "100"], [("bitmap", "warehouse_zone"), ("rle", "warehouse_id")], "AND"),
-                QuerySpec("agg_warehouse_count", ["inventory_id"], ["warehouse_id", "=", "120"], [("rle", "warehouse_id")], "aggregation-friendly count"),
+                QuerySpec("eq_warehouse", ["inventory_id"], ["warehouse_id", "=", "100"], [[("rle", "warehouse_id")]], "equality"),
+                QuerySpec("eq_zone", ["inventory_id"], ["warehouse_zone", "=", "'bulk'"], [[("bitmap", "warehouse_zone")]], "equality"),
+                QuerySpec("range_product_selective", ["inventory_id"], ["product_id", ">=", "1390200"], [[("zone_map", "product_id")], [("imprints", "product_id")], [("sketches", "product_id")]], "selective sorted range"),
+                QuerySpec("range_restock_nonselective", ["inventory_id"], ["restock_ts", ">=", "1704200000"], [[("zone_map", "restock_ts")]], "non-selective sorted range"),
+                QuerySpec("and_warehouse_aisle", ["inventory_id"], ["warehouse_id", "=", "100", "AND", "aisle_id", "=", "1"], [[("rle", "warehouse_id"), ("rle", "aisle_id")]], "AND with RLE on both sides"),
+                QuerySpec("agg_warehouse_count", ["inventory_id"], ["warehouse_id", "=", "120"], [[("rle", "warehouse_id")]], "aggregation-friendly count"),
             ],
         ),
         DatasetSpec(
@@ -92,10 +92,10 @@ def build_dataset_specs(root_dir: Path) -> list[DatasetSpec]:
             },
             queries=[
                 QuerySpec("eq_terminal", ["auth_id"], ["terminal_id", "=", "5"], [], "equality"),
-                QuerySpec("eq_category", ["auth_id"], ["merchant_category", "=", "'travel'"], [("bitmap", "merchant_category")], "equality"),
+                QuerySpec("eq_category", ["auth_id"], ["merchant_category", "=", "'travel'"], [[("bitmap", "merchant_category")]], "equality"),
                 QuerySpec("range_amount_selective", ["auth_id"], ["amount_cents", ">=", "245000"], [], "selective range"),
                 QuerySpec("range_amount_nonselective", ["auth_id"], ["amount_cents", ">=", "1000"], [], "non-selective range"),
-                QuerySpec("and_category_terminal", ["auth_id"], ["merchant_category", "=", "'grocery'", "AND", "terminal_id", "=", "5"], [("bitmap", "merchant_category")], "AND"),
+                QuerySpec("and_category_terminal", ["auth_id"], ["merchant_category", "=", "'grocery'", "AND", "terminal_id", "=", "5"], [], "AND"),
                 QuerySpec("agg_terminal_count", ["auth_id"], ["terminal_id", "=", "1"], [], "aggregation-friendly count"),
             ],
         ),
@@ -113,12 +113,12 @@ def build_dataset_specs(root_dir: Path) -> list[DatasetSpec]:
                 "package_weight_g": ("INTEGER", None),
             },
             queries=[
-                QuerySpec("eq_status", ["shipment_event_id"], ["status_code", "=", "3"], [("bitmap", "status_code")], "equality"),
-                QuerySpec("eq_package", ["shipment_event_id"], ["package_id", "=", "500100"], [("rle", "package_id")], "equality"),
-                QuerySpec("range_time_selective", ["shipment_event_id"], ["event_time", ">=", "1736130000"], [("zone_map", "event_time")], "selective range"),
-                QuerySpec("range_time_nonselective", ["shipment_event_id"], ["event_time", ">=", "1735693200"], [("zone_map", "event_time")], "non-selective range"),
-                QuerySpec("and_status_weight", ["shipment_event_id"], ["status_code", "=", "3", "AND", "package_weight_g", ">", "3000"], [("bitmap", "status_code")], "AND"),
-                QuerySpec("agg_status_count", ["shipment_event_id"], ["status_code", "=", "0"], [("bitmap", "status_code")], "aggregation-friendly count"),
+                QuerySpec("eq_status", ["shipment_event_id"], ["status_code", "=", "3"], [[("bitmap", "status_code")]], "equality"),
+                QuerySpec("eq_package", ["shipment_event_id"], ["package_id", "=", "500100"], [[("rle", "package_id")]], "equality"),
+                QuerySpec("range_time_selective", ["shipment_event_id"], ["event_time", ">=", "1736145000"], [[("zone_map", "event_time")], [("imprints", "event_time")], [("sketches", "event_time")]], "highly selective sorted range"),
+                QuerySpec("range_time_nonselective", ["shipment_event_id"], ["event_time", ">=", "1735693200"], [[("zone_map", "event_time")]], "non-selective sorted range"),
+                QuerySpec("and_status_hub", ["shipment_event_id"], ["status_code", "=", "3", "AND", "hub_id", "=", "204"], [[("bitmap", "status_code"), ("bitmap", "hub_id")]], "AND with bitmap on both sides"),
+                QuerySpec("agg_status_count", ["shipment_event_id"], ["status_code", "=", "0"], [[("bitmap", "status_code")]], "aggregation-friendly count"),
             ],
         ),
     ]

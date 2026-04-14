@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from OLAP_system.structures import bitmap_index, rle, zone_map
+from OLAP_system.structures import bitmap_index, rle, zone_map, dictionary_encoding
 from OLAP_system.timer import IndexTime, QueryTime, record_index, record_query
 
 # A mapping between table names and their respective tables.
@@ -54,6 +54,7 @@ class QueryRuntime:
     zone_map_used: bool = False
     bitmap_used: bool = False
     rle_used: bool = False
+    dictionary_used: bool = False
 
 
 def _parse_literal(token: str) -> object:
@@ -194,6 +195,7 @@ class ColumnChunk:
         self.zone_maps: dict[str, zone_map.ZoneMap] = {}
         self.bitmap_indexes: dict[str, bitmap_index.BitmapIndex] = {}
         self.rle_indexes: dict[str, np.ndarray] = {}
+        self.dictionary_indexes: dict[str, dictionary_encoding.DictionaryEncoding] = {}
 
     def _scan_clause(self, clause: PredicateClause, runtime: QueryRuntime) -> np.ndarray:
         values = self.columns[clause.column]
@@ -217,6 +219,14 @@ class ColumnChunk:
             bitmap = np.zeros(self.length, dtype=bool)
             bitmap[match_indices] = True
             return bitmap
+
+        if clause.column in self.dictionary_indexes:
+            match_indices = dictionary_encoding.filter_chunk(self, clause.operator, clause.value, clause.column)
+            runtime.dictionary_used = True
+            bitmap = np.zeros(self.length, dtype=bool)
+            bitmap[match_indices] = True
+            return bitmap
+
 
         if clause.column in self.zone_maps and zone_map.can_skip(
             self.zone_maps[clause.column], clause.operator, clause.value
@@ -253,9 +263,6 @@ class ColumnChunk:
         raise AssertionError("Unsupported predicate node.")
 
     def get_tuple(self, index: list[int], column_names: list[str]) -> pd.DataFrame:
-        if column_names == ["*"]:
-            column_names = list(self.columns.keys())
-
         bad_cols = [col for col in column_names if col not in self.columns]
         if bad_cols:
             raise AssertionError(f"Column(s) '{bad_cols}' not in table.")
@@ -265,6 +272,8 @@ class ColumnChunk:
         for col in column_names:
             if self.indexes.get(col) == "rle":
                 col_match = rle.get_tuple(self.rle_indexes[col], index)
+            elif self.indexes.get(col) == "dictionary":
+                col_match = dictionary_encoding.get_tuple(self.dictionary_indexes[col], index)
             else:
                 col_match = pd.Series(self.columns[col][index], index=index)
             col_matches[col] = col_match.to_list()
@@ -286,6 +295,10 @@ class ColumnChunk:
             case "bitmap":
                 metadata = bitmap_index.build_index(self, column)
                 size = bitmap_index.size_bytes(metadata)
+            case "dictionary":
+                de = dictionary_encoding.build_index(self.columns[column])
+                self.dictionary_indexes[column] = de
+                size = dictionary_encoding.size_bytes(de)
             case _:
                 raise AssertionError(f"Indexer {indexer} not found.")
 
@@ -398,7 +411,10 @@ def handle_select(table_name: str, column_names: list[str], predicate: list[str]
 
     id_qualify = time.time()
 
-    res = pd.DataFrame()
+    if column_names == ["*"]:
+        column_names = list(table.column_schema.keys())
+
+    res = pd.DataFrame(columns=column_names)
     for chunk_id, indexes in qualified_ids:
         qualified_tuples = table.chunks[chunk_id].get_tuple(indexes, column_names)
         res = pd.concat((res, qualified_tuples))
@@ -412,6 +428,8 @@ def handle_select(table_name: str, column_names: list[str], predicate: list[str]
         index_types_used.append("rle")
     if runtime.zone_map_used:
         index_types_used.append("zone_map")
+    if runtime.dictionary_used:
+        index_types_used.append("dictionary")
 
     metric = QueryTime(
         id_qualify=id_qualify - start,

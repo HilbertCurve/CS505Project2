@@ -71,7 +71,7 @@ def build_dataset_specs(root_dir: Path) -> list[DatasetSpec]:
             },
             queries=[
                 QuerySpec("eq_warehouse", ["inventory_id"], ["warehouse_id", "=", "100"], [("rle", "warehouse_id")], "equality"),
-                QuerySpec("eq_zone", ["inventory_id"], ["warehouse_zone", "=", "'bulk'"], [("bitmap", "warehouse_zone")], "equality"),
+                QuerySpec("eq_zone", ["inventory_id"], ["warehouse_zone", "=", "'bulk'"], [("dictionary", "warehouse_zone")], "equality"),
                 QuerySpec("range_product_selective", ["inventory_id"], ["product_id", ">=", "1390200"], [("zone_map", "product_id")], "selective range"),
                 QuerySpec("range_restock_nonselective", ["inventory_id"], ["restock_ts", ">=", "1704200000"], [("zone_map", "restock_ts")], "non-selective range"),
                 QuerySpec("and_zone_warehouse", ["inventory_id"], ["warehouse_zone", "=", "'bulk'", "AND", "warehouse_id", "=", "100"], [("bitmap", "warehouse_zone"), ("rle", "warehouse_id")], "AND"),
@@ -95,7 +95,7 @@ def build_dataset_specs(root_dir: Path) -> list[DatasetSpec]:
                 QuerySpec("eq_category", ["auth_id"], ["merchant_category", "=", "'travel'"], [("bitmap", "merchant_category")], "equality"),
                 QuerySpec("range_amount_selective", ["auth_id"], ["amount_cents", ">=", "245000"], [], "selective range"),
                 QuerySpec("range_amount_nonselective", ["auth_id"], ["amount_cents", ">=", "1000"], [], "non-selective range"),
-                QuerySpec("and_category_terminal", ["auth_id"], ["merchant_category", "=", "'grocery'", "AND", "terminal_id", "=", "5"], [("bitmap", "merchant_category")], "AND"),
+                QuerySpec("and_category_terminal", ["auth_id"], ["merchant_category", "=", "'grocery'", "AND", "terminal_id", "=", "5"], [("dictionary", "merchant_category")], "AND"),
                 QuerySpec("agg_terminal_count", ["auth_id"], ["terminal_id", "=", "1"], [], "aggregation-friendly count"),
             ],
         ),

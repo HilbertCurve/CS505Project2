@@ -13,7 +13,7 @@ from pathlib import Path
 
 # Generate 10,000 rows per dataset so the files are large enough to expose
 # compression and indexing behavior without being too annoying to inspect.
-DEFAULT_ROW_COUNT = 10_000
+DEFAULT_ROW_COUNT = 1_000
 
 # Store generated CSV files alongside the other project test data.
 OUTPUT_DIR = Path(__file__).resolve().parent.parent.parent / "test" / "datasets"

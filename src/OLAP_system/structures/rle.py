@@ -5,7 +5,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-
 def build_index(column: np.ndarray) -> np.ndarray:
     """Encode a column as pairs of ``(value, run_length)``."""
     # step 1: initialize return values, pointer to start of column

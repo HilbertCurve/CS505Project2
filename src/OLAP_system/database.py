@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from OLAP_system.structures import bitmap_index, rle, zone_map, dictionary_encoding
+from OLAP_system.structures import bitmap_index, rle, zone_map, dictionary_encoding, delta_bitpacking, mostly_encoding
 from OLAP_system.timer import IndexTime, QueryTime, record_index, record_query
 
 # A mapping between table names and their respective tables.
@@ -55,6 +55,8 @@ class QueryRuntime:
     bitmap_used: bool = False
     rle_used: bool = False
     dictionary_used: bool = False
+    dbp_used: bool = False
+    mostly_used: bool = False
 
 
 def _parse_literal(token: str) -> object:
@@ -196,6 +198,8 @@ class ColumnChunk:
         self.bitmap_indexes: dict[str, bitmap_index.BitmapIndex] = {}
         self.rle_indexes: dict[str, np.ndarray] = {}
         self.dictionary_indexes: dict[str, dictionary_encoding.DictionaryEncoding] = {}
+        self.dbp_indexes: dict[str, delta_bitpacking.DBPEncoding] = {}
+        self.mostly_indexes: dict[str, mostly_encoding.MostlyEncoding] = {}
 
     def _scan_clause(self, clause: PredicateClause, runtime: QueryRuntime) -> np.ndarray:
         values = self.columns[clause.column]
@@ -227,6 +231,19 @@ class ColumnChunk:
             bitmap[match_indices] = True
             return bitmap
 
+        if clause.column in self.dbp_indexes:
+            match_indices = delta_bitpacking.filter_chunk(self, clause.operator, clause.value, clause.column)
+            runtime.delta_bitmap_used = True
+            bitmap = np.zeros(self.length, dtype=bool)
+            bitmap[match_indices] = True
+            return bitmap
+
+        if clause.column in self.mostly_indexes:
+            match_indices = mostly_encoding.filter_chunk(self, clause.operator, clause.value, clause.column)
+            runtime.mostly_used = True
+            bitmap = np.zeros(self.length, dtype=bool)
+            bitmap[match_indices] = True
+            return bitmap
 
         if clause.column in self.zone_maps and zone_map.can_skip(
             self.zone_maps[clause.column], clause.operator, clause.value
@@ -274,6 +291,10 @@ class ColumnChunk:
                 col_match = rle.get_tuple(self.rle_indexes[col], index)
             elif self.indexes.get(col) == "dictionary":
                 col_match = dictionary_encoding.get_tuple(self.dictionary_indexes[col], index)
+            elif self.indexes.get(col) == "dbp":
+                col_match = delta_bitpacking.get_tuple(self.dbp_indexes[col], index)
+            elif self.indexes.get(col) == "mostly":
+                col_match = mostly_encoding.get_tuple(self.mostly_indexes[col], index)
             else:
                 col_match = pd.Series(self.columns[col][index], index=index)
             col_matches[col] = col_match.to_list()
@@ -299,6 +320,22 @@ class ColumnChunk:
                 de = dictionary_encoding.build_index(self.columns[column])
                 self.dictionary_indexes[column] = de
                 size = dictionary_encoding.size_bytes(de)
+            case "dbp":
+                dbp = delta_bitpacking.build_index(self.columns[column])
+                self.dbp_indexes[column] = dbp
+                size = delta_bitpacking.size_bytes(dbp)
+            case "mostly8":
+                mostly = mostly_encoding.build_index(self.columns[column], width=8)
+                self.mostly_indexes[column] = mostly
+                size = mostly_encoding.size_bytes(mostly)
+            case "mostly16":
+                mostly = mostly_encoding.build_index(self.columns[column], width=16)
+                self.mostly_indexes[column] = mostly
+                size = mostly_encoding.size_bytes(mostly)
+            case "mostly32":
+                mostly = mostly_encoding.build_index(self.columns[column], width=32)
+                self.mostly_indexes[column] = mostly
+                size = mostly_encoding.size_bytes(mostly)
             case _:
                 raise AssertionError(f"Indexer {indexer} not found.")
 
@@ -430,6 +467,10 @@ def handle_select(table_name: str, column_names: list[str], predicate: list[str]
         index_types_used.append("zone_map")
     if runtime.dictionary_used:
         index_types_used.append("dictionary")
+    if runtime.dbp_used:
+        index_types_used.append("dbp")
+    if runtime.mostly_used:
+        index_types_used.append("mostly")
 
     metric = QueryTime(
         id_qualify=id_qualify - start,

@@ -47,8 +47,8 @@ def build_dataset_specs(root_dir: Path) -> list[DatasetSpec]:
                 "account_balance_cents": ("INTEGER", None),
             },
             queries=[
-                QuerySpec("eq_status", ["account_id"], ["status_code", "=", "0"], [("bitmap", "status_code")], "equality"),
-                QuerySpec("eq_plan", ["account_id"], ["plan_tier", "=", "3"], [("bitmap", "plan_tier")], "equality"),
+                QuerySpec("eq_status", ["account_id"], ["status_code", "=", "0"], [("dbp", "status_code")], "equality"),
+                QuerySpec("eq_plan", ["account_id"], ["plan_tier", "=", "3"], [("mostly8", "plan_tier")], "equality"),
                 QuerySpec("range_balance_selective", ["account_id"], ["account_balance_cents", ">", "3000"], [], "selective range"),
                 QuerySpec("range_balance_nonselective", ["account_id"], ["account_balance_cents", ">=", "100"], [], "non-selective range"),
                 QuerySpec("and_status_balance", ["account_id"], ["status_code", "=", "2", "AND", "account_balance_cents", ">", "3000"], [("bitmap", "status_code")], "AND"),
@@ -75,7 +75,7 @@ def build_dataset_specs(root_dir: Path) -> list[DatasetSpec]:
                 QuerySpec("range_product_selective", ["inventory_id"], ["product_id", ">=", "1390200"], [("zone_map", "product_id")], "selective range"),
                 QuerySpec("range_restock_nonselective", ["inventory_id"], ["restock_ts", ">=", "1704200000"], [("zone_map", "restock_ts")], "non-selective range"),
                 QuerySpec("and_zone_warehouse", ["inventory_id"], ["warehouse_zone", "=", "'bulk'", "AND", "warehouse_id", "=", "100"], [("bitmap", "warehouse_zone"), ("rle", "warehouse_id")], "AND"),
-                QuerySpec("agg_warehouse_count", ["inventory_id"], ["warehouse_id", "=", "120"], [("rle", "warehouse_id")], "aggregation-friendly count"),
+                QuerySpec("agg_warehouse_count", ["inventory_id"], ["warehouse_id", "=", "120"], [("bitmap", "warehouse_id")], "aggregation-friendly count"),
             ],
         ),
         DatasetSpec(

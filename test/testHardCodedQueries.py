@@ -191,19 +191,25 @@ def run_suite() -> None:
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text("", encoding="utf-8")
     append_report(["Generating datasets...", ""])
+    print("Generating datasets... ", end='')
     generate_all_datasets()
+    print("Done.")
 
     append_report(["Running hard-coded query evaluation...", ""])
     dataset_specs = build_dataset_specs(ROOT_DIR)
     assert len(dataset_specs) >= 4
 
     for dataset_spec in dataset_specs:
+        print(f"Running dataset {dataset_spec.name}...")
         append_report(["", "", "=" * (9 + len(dataset_spec.name)), f"Dataset: {dataset_spec.name}", "=" * (9 + len(dataset_spec.name)), ""])
         assert dataset_spec.path.exists(), f"Missing dataset: {dataset_spec.path}"
         assert len(dataset_spec.queries) >= 6
 
         for query_spec in dataset_spec.queries:
+            print(f"\tQuery: {query_spec.name} [{query_spec.notes}]... ", end='')
             evaluate_query(dataset_spec, query_spec)
+            print("Done.")
+        print("Done.")
 
     append_report(["All hard-coded evaluations passed."])
     print(f"Saved report to {REPORT_PATH}")
